@@ -19,6 +19,10 @@ Pipeline Guard was created as a practical research project to explore these conc
 > The project is not intended to replace commercial OT security products. Instead, it serves as a research, learning, and implementation exercise focused on understanding how industrial monitoring platforms operate within real-world control environments.
 
 ---
+## Architecture Overview
+<img width="453" height="654" alt="Purdue model for our Project" src="https://github.com/user-attachments/assets/d4d7589e-1093-47db-af3d-3ed8ac762f95" />
+
+---
 
 ## Project Objectives
 
