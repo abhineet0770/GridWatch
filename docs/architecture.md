@@ -77,9 +77,7 @@ Azure Storage
 
 ### Asset Discovery Module
 
-Purpose:
-
-Identify industrial assets through passive network observation.
+Purpose: Identify industrial assets through passive network observation.
 
 Expected Outputs:
 
@@ -91,9 +89,7 @@ Expected Outputs:
 
 ### Process-State Tracking Module
 
-Purpose:
-
-Maintain awareness of process conditions.
+Purpose: Maintain awareness of process conditions.
 
 Tracked Variables:
 
@@ -105,9 +101,7 @@ Tracked Variables:
 
 ### Risk Assessment Engine
 
-Purpose:
-
-Evaluate observed actions against engineering rules.
+Purpose: Evaluate observed actions against engineering rules.
 
 Example Rule:
 
