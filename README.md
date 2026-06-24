@@ -40,7 +40,7 @@ Pipeline Guard was created as a practical research project to explore these conc
 ## Current Architecture
 
 ```text
-ASUS Laptop
+Laptop A
 │
 ├── Windows 11
 │
@@ -54,7 +54,7 @@ ASUS Laptop
         ├── Industrial Network
         └── Process Simulation
 
-Dell Laptop
+Laptop B
 │
 └── Pipeline Guard (Planned)
 ```
