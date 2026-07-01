@@ -1,8 +1,8 @@
-# Pipeline Guard
+# GridWatch
 
 Passive OT Monitoring and Process-Aware Risk Assessment using GRFICSv3
 
-Pipeline Guard is a research-oriented Operational Technology (OT) cybersecurity project focused on studying and implementing the core concepts behind modern industrial monitoring platforms — built during an OT Security internship at OilSERV.
+Pipeline Guard is a research-oriented Operational Technology (OT) cybersecurity project focused on studying and implementing the core concepts behind modern industrial monitoring platforms.
 
 The project uses the GRFICSv3 industrial control system testbed to simulate a realistic oil pipeline environment, with a two-laptop lab passively mirroring ICS traffic, parsing Modbus TCP, and generating process-aware alerts forwarded to Azure.
 
@@ -19,7 +19,7 @@ Pipeline Guard was created as a practical research project to explore these conc
 Two physical laptops connected via crossover Ethernet, isolating the OT lab from the daily-driver network:
 
 ```
-ASUS "witcher" (192.168.10.1)  <──crossover Ethernet──>  Dell "beast" (192.168.10.2)
+Laptop A (192.168.10.1)    <──crossover Ethernet──>      Laptop B (192.168.10.2)
                                                                   │
                                                           Ubuntu VM (vboxuser@192.168.29.83)
                                                                   │
@@ -130,3 +130,13 @@ B.Tech Computer Science and Engineering (Cybersecurity), UPES Dehradun
 OT Security Intern, OilSERV
 
 Research Interests: OT Security · Industrial Cybersecurity · Network Monitoring · Process-Aware Detection
+
+## Acknowledgments
+
+This project uses [GRFICSv3](https://github.com/Fortiphyd/GRFICSv3), an open-source
+OT/ICS security lab developed by Fortiphyd Logic (originally with Georgia Tech).
+GRFICS is not affiliated with or endorsing this project.
+
+Citation: Formby, D., Rad, M., and Beyah, R. "Lowering the Barriers to Industrial
+Control System Security with GRFICS." USENIX Workshop on Advances in Security
+Education (ASE 18).
