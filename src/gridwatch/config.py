@@ -31,10 +31,11 @@ KNOWN_GOOD_IPS = {
 
 # Modbus Register Map
 # Input Registers (IR)
-REG_REACTOR_PRESSURE = 108       # IR 108: Reactor Pressure (kPa)
-
-# We assume HR 100 controls or indicates the reactor outlet valve state.
+# IR 100: Reactor outlet valve position (OpenPLC f1_valve_pos, %IW100). Read-only;
+# legitimately appears only under FC04 (Read Input Registers), never FC03
+# (Read Holding Registers), and never as the target of FC06/FC16 writes.
 REG_VALVE_STATE = 100
+REG_REACTOR_PRESSURE = 108       # IR 108: Reactor Pressure (kPa)
 VALVE_CLOSED_VALUE = 0  # 0 indicates valve is closed, non-zero is open
 
 # Modbus Function Codes

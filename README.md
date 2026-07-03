@@ -40,8 +40,9 @@ Laptop A (192.168.10.1)    <──crossover Ethernet──>      Laptop B (192.1
 **Modbus register map (GRFICSv3):**
 | Register | Meaning |
 |---|---|
+| IR 100 | Reactor outlet valve position (f1_valve_pos, read-only) |
 | IR 108 | Reactor pressure |
-| HR 100–103 | PLC output words |
+| HR 101–103 | PLC output words |
 | HR 1024–1028 | Sticky setpoints |
 
 **Alerting:** Process-aware rules (R001–R004) grounded in IEC 62443, NERC CIP, and NIST SP 800-82, forwarding alerts to an Azure Logic App with Blob Storage as the alert store (replacing a traditional historian).
