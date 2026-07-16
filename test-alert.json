@@ -1,0 +1,1 @@
+{"alert_id":"test-0001","rule_id":"R001","severity":"critical","timestamp":"2026-07-16T12:00:00Z","source_ip":"192.0.2.15","destination_ip":"192.0.2.42","network_zone":"DMZ","protocol":"Modbus/TCP","function_code":6,"register_address":100,"description":"Test alert - manual pipeline verification","matched_condition":"manual test"}

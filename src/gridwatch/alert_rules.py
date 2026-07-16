@@ -11,6 +11,11 @@ try:
 except ImportError:
     import config
 
+try:
+    from gridwatch.azure_alert_sink import send_alert_to_blob, get_network_zone, get_register_address
+except ImportError:
+    from azure_alert_sink import send_alert_to_blob, get_network_zone, get_register_address
+
 
 def build_alert(
     rule_id: str,
@@ -72,7 +77,7 @@ def check_r001_reactor_pressure(state: dict, parsed_packet: dict) -> dict:
 
     if pressure is not None and valve_closed is not None:
         if pressure > config.REACTOR_PRESSURE_MAX_KPA and valve_closed:
-            return build_alert(
+            alert = build_alert(
                 "R001",
                 "CRITICAL",
                 (
@@ -82,6 +87,19 @@ def check_r001_reactor_pressure(state: dict, parsed_packet: dict) -> dict:
                 ),
                 parsed_packet,
             )
+            send_alert_to_blob(
+                rule_id="R001",
+                severity="CRITICAL",
+                source_ip=parsed_packet["src_ip"],
+                destination_ip=parsed_packet["dst_ip"],
+                network_zone=get_network_zone(parsed_packet["src_ip"]),
+                protocol="Modbus/TCP",
+                function_code=parsed_packet["func_code"],
+                register_address=get_register_address(parsed_packet, default_val=108),
+                description=alert["description"],
+                matched_condition=f"reactor_pressure ({pressure} kPa) > {config.REACTOR_PRESSURE_MAX_KPA} kPa AND valve_closed ({valve_closed})",
+            )
+            return alert
     return None
 
 def check_r002_dmz_write(parsed_packet: dict) -> dict:
@@ -105,7 +123,7 @@ def check_r002_dmz_write(parsed_packet: dict) -> dict:
             try:
                 src_addr = ipaddress.ip_address(src_ip)
                 if src_addr in config.DMZ_SUBNET:
-                    return build_alert(
+                    alert = build_alert(
                         "R002",
                         "CRITICAL",
                         (
@@ -115,6 +133,19 @@ def check_r002_dmz_write(parsed_packet: dict) -> dict:
                         ),
                         parsed_packet,
                     )
+                    send_alert_to_blob(
+                        rule_id="R002",
+                        severity="CRITICAL",
+                        source_ip=src_ip,
+                        destination_ip=dst_ip,
+                        network_zone="DMZ",
+                        protocol="Modbus/TCP",
+                        function_code=func_code,
+                        register_address=get_register_address(parsed_packet),
+                        description=alert["description"],
+                        matched_condition=f"direction == request AND dst_ip == {config.PLC_IP} AND func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES AND src_ip ({src_ip}) in DMZ_SUBNET",
+                    )
+                    return alert
             except ValueError:
                 pass
     return None
@@ -139,7 +170,7 @@ def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
     if direction == "request" and src_ip == config.EWS_IP and dst_ip == config.PLC_IP:
         if func_code in config.SUSPICIOUS_FUNCTION_CODES:
             if is_outside_maintenance_window(timestamp):
-                return build_alert(
+                alert = build_alert(
                     "R003",
                     "HIGH",
                     (
@@ -149,6 +180,19 @@ def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
                     ),
                     parsed_packet,
                 )
+                send_alert_to_blob(
+                    rule_id="R003",
+                    severity="HIGH",
+                    source_ip=src_ip,
+                    destination_ip=dst_ip,
+                    network_zone=get_network_zone(src_ip),
+                    protocol="Modbus/TCP",
+                    function_code=func_code,
+                    register_address=get_register_address(parsed_packet),
+                    description=alert["description"],
+                    matched_condition=f"direction == request AND src_ip ({src_ip}) == EWS_IP AND dst_ip ({dst_ip}) == PLC_IP AND func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES AND outside maintenance window ({config.MAINTENANCE_START}-{config.MAINTENANCE_END})",
+                )
+                return alert
     return None
 
 def check_r004_unknown_ip(parsed_packet: dict) -> dict:
@@ -166,7 +210,7 @@ def check_r004_unknown_ip(parsed_packet: dict) -> dict:
             addr = ipaddress.ip_address(ip)
             # Only trigger if the IP belongs to the local ICS network but isn't whitelisted
             if addr in config.ICS_SUBNET and ip not in config.KNOWN_GOOD_IPS:
-                return build_alert(
+                alert = build_alert(
                     "R004",
                     "HIGH",
                     (
@@ -175,6 +219,19 @@ def check_r004_unknown_ip(parsed_packet: dict) -> dict:
                     ),
                     parsed_packet,
                 )
+                send_alert_to_blob(
+                    rule_id="R004",
+                    severity="HIGH",
+                    source_ip=parsed_packet["src_ip"],
+                    destination_ip=parsed_packet["dst_ip"],
+                    network_zone="ICS",
+                    protocol="Modbus/TCP",
+                    function_code=parsed_packet["func_code"],
+                    register_address=get_register_address(parsed_packet),
+                    description=alert["description"],
+                    matched_condition=f"IP ({ip}) belongs to ICS subnet ({config.ICS_SUBNET_STR}) and not in KNOWN_GOOD_IPS whitelist",
+                )
+                return alert
         except ValueError:
             pass
     return None
