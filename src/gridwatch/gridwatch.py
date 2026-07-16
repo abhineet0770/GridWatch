@@ -14,11 +14,11 @@ import typer
 
 try:
     from gridwatch import config
-    from gridwatch.modbus_parser import ModbusParser
+    from gridwatch.modbus_parser import ModbusParser, RemoteModbusCapture
     from gridwatch.alert_rules import check_rules
 except ImportError:
     import config
-    from modbus_parser import ModbusParser
+    from modbus_parser import ModbusParser, RemoteModbusCapture
     from alert_rules import check_rules
 
 PacketData = dict[str, Any]
@@ -122,10 +122,16 @@ def build_alert_log_entry(alert: PacketData) -> PacketData:
 @app.command()
 def monitor(
     interface: str = typer.Option(
-        ...,
+        None,
         "--interface",
         "-i",
         help="Network interface to sniff packets on (e.g. eth0, wlan0)"
+    ),
+    remote: bool = typer.Option(
+        False,
+        "--remote",
+        "-r",
+        help="Enable remote capture via SSH jump chain as configured in config.py"
     ),
     verbose: bool = typer.Option(
         False,
@@ -137,9 +143,16 @@ def monitor(
     """
     Start passive Modbus TCP packet capture and analysis.
     """
+    if (interface is None and not remote) or (interface is not None and remote):
+        typer.secho("[!] Error: You must provide exactly one of --interface (-i) or --remote (-r).", fg=typer.colors.RED, bold=True)
+        raise typer.Exit(code=1)
+
     typer.secho(f"[*] Initializing GridWatch Passive Monitor...", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"[*] Subnet Config: ICS={config.ICS_SUBNET_STR}, DMZ={config.DMZ_SUBNET_STR}")
-    typer.echo(f"[*] Monitoring interface: {interface}")
+    if remote:
+        typer.echo(f"[*] Monitoring mode: REMOTE (SSH Jump Chain)")
+    else:
+        typer.echo(f"[*] Monitoring interface: {interface}")
     typer.echo(f"[*] Verbose logging: {'ENABLED' if verbose else 'DISABLED'}")
     typer.secho(f"[+] Sniffing Modbus TCP traffic (Port 502)... Press Ctrl+C to stop.", fg=typer.colors.GREEN, bold=True)
     
@@ -165,7 +178,10 @@ def monitor(
             # Log alert event to log file (always logged regardless of verbose flag)
             logger.info(json.dumps(build_alert_log_entry(alert)))
 
-    parser = ModbusParser(interface=interface)
+    if remote:
+        parser = RemoteModbusCapture()
+    else:
+        parser = ModbusParser(interface=interface)
     
     try:
         parser.start_capture(callback=packet_callback)

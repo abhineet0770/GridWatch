@@ -8,6 +8,7 @@ register addresses requested earlier in the exchange.
 
 import asyncio
 import logging
+import subprocess
 from collections.abc import Callable
 from datetime import datetime
 
@@ -161,3 +162,215 @@ class ModbusParser:
                     callback(parsed)
             except Exception:
                 logger.exception("Failed to parse captured packet; continuing capture loop.")
+
+
+class RemoteModbusCapture:
+    def __init__(self):
+        """
+        Initialize the remote Modbus capture.
+        Uses SSH jump chain parameters from config.py.
+        """
+        self.transaction_map: dict[int, dict[str, int | str | None]] = {}
+        self.raw_lines_printed = 0
+
+    def parse_line(self, line: str) -> dict | None:
+        """
+        Parse a single CSV line from tshark stdout.
+        
+        Fields selected:
+        0: ip.src
+        1: ip.dst
+        2: tcp.srcport
+        3: tcp.dstport
+        4: mbtcp.trans_id
+        5: modbus.func_code
+        6: modbus.reference_num
+        7: modbus.word_cnt
+        8:-1: modbus.regval_uint16 (could be multiple values, or empty)
+        -1: frame.time_epoch
+        """
+        parts = line.split(",")
+        if len(parts) < 10:
+            return None
+
+        # Verify it's a Modbus packet by checking trans_id and func_code presence
+        trans_id_str = parts[4].strip()
+        func_code_str = parts[5].strip()
+        if not trans_id_str or not func_code_str:
+            return None
+
+        try:
+            trans_id = int(trans_id_str)
+            func_code = int(func_code_str)
+        except ValueError:
+            return None
+
+        src_ip = parts[0].strip()
+        dst_ip = parts[1].strip()
+        src_port_str = parts[2].strip()
+        dst_port_str = parts[3].strip()
+
+        direction = "unknown"
+        if dst_port_str == str(config.MODBUS_PORT):
+            direction = "request"
+        elif src_port_str == str(config.MODBUS_PORT):
+            direction = "response"
+
+        # Extract values
+        values_raw = parts[8:-1]
+        values = []
+        for val in values_raw:
+            val = val.strip()
+            if val:
+                # Handle potential list or hex strings
+                try:
+                    if val.lower().startswith("0x"):
+                        values.append(int(val, 16))
+                    else:
+                        values.append(int(val))
+                except ValueError:
+                    try:
+                        values.append(int(val, 16))
+                    except ValueError:
+                        pass
+
+        ref_num = None
+        registers: dict[int, int] = {}
+
+        if direction == "request":
+            ref_num_str = parts[6].strip()
+            if ref_num_str:
+                try:
+                    ref_num = int(ref_num_str)
+                except ValueError:
+                    pass
+
+            if func_code in (3, 4):
+                word_cnt_str = parts[7].strip()
+                try:
+                    word_cnt = int(word_cnt_str) if word_cnt_str else 1
+                except ValueError:
+                    word_cnt = 1
+                self.transaction_map[trans_id] = {
+                    "func_code": func_code,
+                    "ref_num": ref_num,
+                    "word_cnt": word_cnt,
+                    "src_ip": src_ip,
+                    "dst_ip": dst_ip,
+                }
+            elif func_code in (6, 16) and ref_num is not None and values:
+                for index, value in enumerate(values):
+                    registers[ref_num + index] = value
+
+        elif direction == "response":
+            request_info = self.transaction_map.pop(trans_id, None)
+            if request_info:
+                ref_num = request_info.get("ref_num")
+                if ref_num is not None and values:
+                    for index, value in enumerate(values):
+                        registers[ref_num + index] = value
+
+        # Parse epoch time
+        try:
+            timestamp = datetime.fromtimestamp(float(parts[-1].strip()))
+        except (ValueError, TypeError):
+            timestamp = datetime.now()
+
+        return {
+            "timestamp": timestamp,
+            "src_ip": src_ip,
+            "dst_ip": dst_ip,
+            "trans_id": trans_id,
+            "direction": direction,
+            "func_code": func_code,
+            "ref_num": ref_num,
+            "registers": registers,
+            "values": values,
+        }
+
+    def start_capture(self, callback: Callable[[dict], None]) -> None:
+        """
+        Begin remote capture by chaining ssh and tshark subprocesses.
+        Continuously reads tshark's stdout line by line, parses it,
+        and invokes `callback` with parsed packet metadata.
+        """
+        ssh_cmd = [
+            "ssh",
+            "-J", f"{config.JUMP_USER}@{config.LAPTOP_A_IP}",
+            f"{config.VM_USER}@{config.VM_IP}",
+            f"sudo tcpdump -i {config.ICS_INTERFACE} port 502 -w -"
+        ]
+
+        tshark_cmd = [
+            "tshark",
+            "-i", "-",
+            "-T", "fields",
+            "-e", "ip.src",
+            "-e", "ip.dst",
+            "-e", "tcp.srcport",
+            "-e", "tcp.dstport",
+            "-e", "mbtcp.trans_id",
+            "-e", "modbus.func_code",
+            "-e", "modbus.reference_num",
+            "-e", "modbus.word_cnt",
+            "-e", "modbus.regval_uint16",
+            "-e", "frame.time_epoch",
+            "-E", "separator=,"
+        ]
+
+        logger.info(f"Starting remote capture: {' '.join(ssh_cmd)} | {' '.join(tshark_cmd)}")
+
+        ssh_proc = None
+        tshark_proc = None
+
+        try:
+            ssh_proc = subprocess.Popen(
+                ssh_cmd,
+                stdout=subprocess.PIPE,
+            )
+
+            tshark_proc = subprocess.Popen(
+                tshark_cmd,
+                stdin=ssh_proc.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            # Close our copy of the write end of the pipe
+            if ssh_proc.stdout:
+                ssh_proc.stdout.close()
+
+            # Read tshark's stdout line by line
+            for line in tshark_proc.stdout:
+                line_str = line.strip()
+                if not line_str:
+                    continue
+
+                if self.raw_lines_printed < 5:
+                    print(f"[Remote Capture] Raw tshark line {self.raw_lines_printed + 1}: {line_str}")
+                    self.raw_lines_printed += 1
+
+                try:
+                    parsed = self.parse_line(line_str)
+                    if parsed:
+                        callback(parsed)
+                except Exception:
+                    logger.exception("Failed to parse remote packet line; continuing capture.")
+
+        finally:
+            # Clean up processes properly
+            for proc in (tshark_proc, ssh_proc):
+                if proc is not None:
+                    try:
+                        if proc.poll() is None:
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=2)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.wait()
+                    except Exception:
+                        pass

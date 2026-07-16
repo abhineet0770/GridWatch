@@ -57,3 +57,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 LOG_FILE_PATH = os.path.join(LOG_DIR, "gridwatch.log")
 
+
+## Remote capture (SSH jump chain)
+JUMP_USER = "jump_user"
+LAPTOP_A_IP = "laptop_a_ip"
+VM_USER = "vm_user"
+VM_IP = "vm_ip"
+ICS_INTERFACE = "ics_interface"
