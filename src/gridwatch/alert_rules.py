@@ -16,6 +16,11 @@ try:
 except ImportError:
     from azure_alert_sink import send_alert_to_blob, get_network_zone, get_register_address
 
+try:
+    from gridwatch.alert_dedup import deduplicator
+except ImportError:
+    from alert_dedup import deduplicator
+
 
 def build_alert(
     rule_id: str,
@@ -87,18 +92,27 @@ def check_r001_reactor_pressure(state: dict, parsed_packet: dict) -> dict:
                 ),
                 parsed_packet,
             )
-            send_alert_to_blob(
+            band_width = config.REACTOR_PRESSURE_MAX_KPA * config.PRESSURE_DEADBAND_PCT
+            pressure_band = int(pressure // band_width) * band_width
+            fingerprint = f"pressure_band_{pressure_band}_valve_{valve_closed}"
+            if deduplicator.should_alert(
                 rule_id="R001",
-                severity="CRITICAL",
-                source_ip=parsed_packet["src_ip"],
-                destination_ip=parsed_packet["dst_ip"],
-                network_zone=get_network_zone(parsed_packet["src_ip"]),
-                protocol="Modbus/TCP",
-                function_code=parsed_packet["func_code"],
-                register_address=get_register_address(parsed_packet, default_val=108),
-                description=alert["description"],
-                matched_condition=f"reactor_pressure ({pressure} kPa) > {config.REACTOR_PRESSURE_MAX_KPA} kPa AND valve_closed ({valve_closed})",
-            )
+                dedup_key=config.PLC_IP,
+                fingerprint=fingerprint,
+                now=parsed_packet.get("timestamp"),
+            ):
+                send_alert_to_blob(
+                    rule_id="R001",
+                    severity="CRITICAL",
+                    source_ip=parsed_packet["src_ip"],
+                    destination_ip=parsed_packet["dst_ip"],
+                    network_zone=get_network_zone(parsed_packet["src_ip"]),
+                    protocol="Modbus/TCP",
+                    function_code=parsed_packet["func_code"],
+                    register_address=get_register_address(parsed_packet, default_val=108),
+                    description=alert["description"],
+                    matched_condition=f"reactor_pressure ({pressure} kPa) > {config.REACTOR_PRESSURE_MAX_KPA} kPa AND valve_closed ({valve_closed})",
+                )
             return alert
     return None
 
@@ -133,18 +147,28 @@ def check_r002_dmz_write(parsed_packet: dict) -> dict:
                         ),
                         parsed_packet,
                     )
-                    send_alert_to_blob(
+                    reg_addr = get_register_address(parsed_packet)
+                    dedup_key = f"{src_ip}:{reg_addr}"
+                    regs = parsed_packet.get("registers", {})
+                    fingerprint = f"fc_{func_code}_val_{sorted(regs.items())}" if regs else f"fc_{func_code}"
+                    if deduplicator.should_alert(
                         rule_id="R002",
-                        severity="CRITICAL",
-                        source_ip=src_ip,
-                        destination_ip=dst_ip,
-                        network_zone="DMZ",
-                        protocol="Modbus/TCP",
-                        function_code=func_code,
-                        register_address=get_register_address(parsed_packet),
-                        description=alert["description"],
-                        matched_condition=f"direction == request AND dst_ip == {config.PLC_IP} AND func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES AND src_ip ({src_ip}) in DMZ_SUBNET",
-                    )
+                        dedup_key=dedup_key,
+                        fingerprint=fingerprint,
+                        now=parsed_packet.get("timestamp"),
+                    ):
+                        send_alert_to_blob(
+                            rule_id="R002",
+                            severity="CRITICAL",
+                            source_ip=src_ip,
+                            destination_ip=dst_ip,
+                            network_zone="DMZ",
+                            protocol="Modbus/TCP",
+                            function_code=func_code,
+                            register_address=reg_addr,
+                            description=alert["description"],
+                            matched_condition=f"direction == request AND dst_ip == {config.PLC_IP} AND func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES AND src_ip ({src_ip}) in DMZ_SUBNET",
+                        )
                     return alert
             except ValueError:
                 pass
@@ -180,18 +204,26 @@ def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
                     ),
                     parsed_packet,
                 )
-                send_alert_to_blob(
+                regs = parsed_packet.get("registers", {})
+                fingerprint = f"fc_{func_code}_val_{sorted(regs.items())}" if regs else f"fc_{func_code}"
+                if deduplicator.should_alert(
                     rule_id="R003",
-                    severity="HIGH",
-                    source_ip=src_ip,
-                    destination_ip=dst_ip,
-                    network_zone=get_network_zone(src_ip),
-                    protocol="Modbus/TCP",
-                    function_code=func_code,
-                    register_address=get_register_address(parsed_packet),
-                    description=alert["description"],
-                    matched_condition=f"direction == request AND src_ip ({src_ip}) == EWS_IP AND dst_ip ({dst_ip}) == PLC_IP AND func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES AND outside maintenance window ({config.MAINTENANCE_START}-{config.MAINTENANCE_END})",
-                )
+                    dedup_key=src_ip,
+                    fingerprint=fingerprint,
+                    now=parsed_packet.get("timestamp"),
+                ):
+                    send_alert_to_blob(
+                        rule_id="R003",
+                        severity="HIGH",
+                        source_ip=src_ip,
+                        destination_ip=dst_ip,
+                        network_zone=get_network_zone(src_ip),
+                        protocol="Modbus/TCP",
+                        function_code=func_code,
+                        register_address=get_register_address(parsed_packet),
+                        description=alert["description"],
+                        matched_condition=f"direction == request AND src_ip ({src_ip}) == EWS_IP AND dst_ip ({dst_ip}) == PLC_IP AND func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES AND outside maintenance window ({config.MAINTENANCE_START}-{config.MAINTENANCE_END})",
+                    )
                 return alert
     return None
 
@@ -219,18 +251,24 @@ def check_r004_unknown_ip(parsed_packet: dict) -> dict:
                     ),
                     parsed_packet,
                 )
-                send_alert_to_blob(
+                if deduplicator.should_alert(
                     rule_id="R004",
-                    severity="HIGH",
-                    source_ip=parsed_packet["src_ip"],
-                    destination_ip=parsed_packet["dst_ip"],
-                    network_zone="ICS",
-                    protocol="Modbus/TCP",
-                    function_code=parsed_packet["func_code"],
-                    register_address=get_register_address(parsed_packet),
-                    description=alert["description"],
-                    matched_condition=f"IP ({ip}) belongs to ICS subnet ({config.ICS_SUBNET_STR}) and not in KNOWN_GOOD_IPS whitelist",
-                )
+                    dedup_key=ip,
+                    fingerprint="unauthorized_ip",
+                    now=parsed_packet.get("timestamp"),
+                ):
+                    send_alert_to_blob(
+                        rule_id="R004",
+                        severity="HIGH",
+                        source_ip=parsed_packet["src_ip"],
+                        destination_ip=parsed_packet["dst_ip"],
+                        network_zone="ICS",
+                        protocol="Modbus/TCP",
+                        function_code=parsed_packet["func_code"],
+                        register_address=get_register_address(parsed_packet),
+                        description=alert["description"],
+                        matched_condition=f"IP ({ip}) belongs to ICS subnet ({config.ICS_SUBNET_STR}) and not in KNOWN_GOOD_IPS whitelist",
+                    )
                 return alert
         except ValueError:
             pass

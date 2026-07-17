@@ -46,6 +46,13 @@ SUSPICIOUS_FUNCTION_CODES = {FC_WRITE_SINGLE, FC_WRITE_MULTIPLE}
 
 # Thresholds & Rules Configuration
 REACTOR_PRESSURE_MAX_KPA = 2900.0  # R001: Pressure > 2900 kPa
+# Deadband for R001 pressure alerts - prevents alert flapping
+# 3% of setpoint, per ISA-18.2 deadband guidance (2-5% typical)
+PRESSURE_DEADBAND_PCT = 0.03 
+
+# Deduplication / Rate Limiting Configuration
+# Defines the cooldown window for suppressing duplicate alerts (in seconds)
+DEDUP_COOLDOWN_SECONDS = 300
 
 # Maintenance Window (R003: EWS writes to PLC must be within this window)
 # Format: "HH:MM" in local VM time
