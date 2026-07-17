@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from gridwatch import alert_rules, config
 from gridwatch.modbus_parser import ModbusParser
@@ -78,7 +79,8 @@ class FakePacket:
 
 
 class AlertRuleTests(unittest.TestCase):
-    def test_r001_triggers_when_pressure_high_and_valve_closed(self):
+    @patch("gridwatch.alert_rules.send_alert_to_blob")
+    def test_r001_triggers_when_pressure_high_and_valve_closed(self, mock_send_alert):
         state = {"reactor_pressure": None, "valve_closed": None}
 
         pressure_packet = make_parsed_packet(
@@ -103,7 +105,8 @@ class AlertRuleTests(unittest.TestCase):
         rule_ids = {alert["rule_id"] for alert in alerts}
         self.assertIn("R001", rule_ids)
 
-    def test_r002_triggers_for_dmz_write_to_plc(self):
+    @patch("gridwatch.alert_rules.send_alert_to_blob")
+    def test_r002_triggers_for_dmz_write_to_plc(self, mock_send_alert):
         packet = make_parsed_packet(
             src_ip="192.168.90.25",
             dst_ip=config.PLC_IP,
@@ -115,7 +118,8 @@ class AlertRuleTests(unittest.TestCase):
         self.assertIsNotNone(alert)
         self.assertEqual(alert["rule_id"], "R002")
 
-    def test_r003_triggers_for_ews_write_outside_maintenance(self):
+    @patch("gridwatch.alert_rules.send_alert_to_blob")
+    def test_r003_triggers_for_ews_write_outside_maintenance(self, mock_send_alert):
         packet = make_parsed_packet(
             src_ip=config.EWS_IP,
             dst_ip=config.PLC_IP,
@@ -128,7 +132,8 @@ class AlertRuleTests(unittest.TestCase):
         self.assertIsNotNone(alert)
         self.assertEqual(alert["rule_id"], "R003")
 
-    def test_r004_triggers_for_unknown_ics_ip(self):
+    @patch("gridwatch.alert_rules.send_alert_to_blob")
+    def test_r004_triggers_for_unknown_ics_ip(self, mock_send_alert):
         packet = make_parsed_packet(
             src_ip="192.168.95.55",
             dst_ip=config.PLC_IP,
