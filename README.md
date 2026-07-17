@@ -103,7 +103,6 @@ gridwatch/
 
 **Abhineet Tandon**
 B.Tech Computer Science and Engineering (Cybersecurity), UPES Dehradun
-OT Security Intern, OilSERV
 
 Research Interests: OT Security · Industrial Cybersecurity · Network Monitoring · Process-Aware Detection
 
