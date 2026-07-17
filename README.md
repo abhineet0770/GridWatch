@@ -1,110 +1,85 @@
 # GridWatch
 
-Passive OT Monitoring and Process-Aware Risk Assessment using GRFICSv3
+Passive OT/ICS network monitoring and process-aware risk assessment, built against GRFICSv3.
 
-GridWatch is a research-oriented Operational Technology (OT) cybersecurity project focused on studying and implementing the core concepts behind modern industrial monitoring platforms.
-
-The project uses the GRFICSv3 industrial control system testbed to simulate a realistic oil pipeline environment, with a two-laptop lab passively mirroring ICS traffic, parsing Modbus TCP, and generating process-aware alerts forwarded to Azure.
+GridWatch is a research-oriented Operational Technology (OT) cybersecurity project that passively monitors Modbus TCP traffic in a simulated industrial control system, correlates it against process state and known-good network behavior, and raises alerts grounded in IEC 62443, NERC CIP, and NIST SP 800-82 to an Azure-based alerting pipeline. It is not intended to replace commercial OT security products — it's a research, learning, and implementation exercise.
 
 ## Project Motivation
 
-Industrial environments differ significantly from traditional IT networks because cyber events can directly affect physical processes.
-
-Modern OT security platforms provide visibility into industrial assets, communications, and operational risks. Understanding how these systems function requires knowledge of industrial protocols, network monitoring, process behavior, and engineering-driven risk assessment.
-
-GridWatch was created as a practical research project to explore these concepts in a realistic environment and better understand the workflow behind process-aware industrial monitoring systems. It is not intended to replace commercial OT security products — it's a research, learning, and implementation exercise.
+Industrial environments differ from traditional IT networks because cyber events can directly affect physical processes. Modern OT security platforms provide visibility into industrial assets, communications, and operational risk. GridWatch was built to explore that workflow hands-on: industrial protocols, passive network monitoring, process behavior, and engineering-driven risk assessment.
 
 ## Architecture
 
+
+<img width="1606" height="979" alt="ChatGPT Image Jul 17, 2026, 05_05_42 PM" src="https://github.com/user-attachments/assets/8758d214-6798-4598-bc0e-d3d592ff9423" />
+
+
 Two physical laptops connected via crossover Ethernet, isolating the OT lab from the daily-driver network:
 
-```
-Laptop A (192.168.10.1)    <──crossover Ethernet──>      Laptop B (192.168.10.2)
-                                                                  │
-                                                          Ubuntu VM (vboxuser@192.168.29.83)
-                                                                  │
-                                                          GRFICSv3 (7 Docker containers)
-                                                          ├── PLC
-                                                          ├── HMI
-                                                          ├── Engineering Workstation
-                                                          ├── Router
-                                                          ├── Process Simulation
-                                                          └── 6x Remote IO Modbus servers
-                                                              (192.168.95.10–15)
-                                                                  │
-                                                          ICS Network (192.168.95.0/24)
-```
+- **Laptop A ("witcher")** — hosts an Ubuntu VM running GRFICSv3 (7 Docker containers: PLC, EWS, HMI, router, process simulation, plus Caldera and Kali).
+- **Laptop B ("beast")** — runs GridWatch itself.
 
-**Traffic mirroring:** `tcpdump` piped over SSH from the Ubuntu VM — fully passive, no active Modbus polling (no PyModbus).
+GridWatch reaches the VM over an SSH jump chain (Laptop B → Laptop A → VM) and captures traffic from inside the `plc` container's own network namespace via `docker exec`, which is required because Docker's macvlan networking doesn't expose same-subnet sibling container traffic (e.g. PLC↔EWS) to any external host-level capture. Capture is fully passive — no active Modbus polling, no control commands ever transmitted.
 
-**Modbus register map (GRFICSv3):**
-| Register | Meaning |
-|---|---|
-| IR 100 | Reactor outlet valve position (f1_valve_pos, read-only) |
-| IR 108 | Reactor pressure |
-| HR 101–103 | PLC output words |
-| HR 1024–1028 | Sticky setpoints |
+## Modbus Register Map (GRFICSv3)
 
-**Alerting:** Process-aware rules (R001–R004) grounded in IEC 62443, NERC CIP, and NIST SP 800-82, forwarding alerts to an Azure Logic App with Blob Storage as the alert store (replacing a traditional historian).
+| Register | Meaning | Used by GridWatch |
+|---|---|---|
+| IR 100 | Reactor outlet valve position (read-only) | R001 |
+| IR 108 | Reactor pressure (kPa) | R001 |
+
+## Detection Rules
+
+| Rule | Trigger | Severity |
+|---|---|---|
+| R001 | Reactor pressure exceeds threshold while outlet valve is closed | CRITICAL |
+| R002 | Modbus write (FC06/FC16) to the PLC originating from the DMZ | CRITICAL |
+| R003 | EWS write to the PLC outside the configured maintenance window | HIGH |
+| R004 | Unrecognized IP address appears on the ICS subnet | HIGH |
+
+Alert deduplication is state-change-aware, with a cooldown window sized against ISA-18.2 / EEMUA-191 industrial alarm-rate benchmarks — this prevents alert flooding without suppressing genuine state changes.
+
+## Alerting Pipeline
+
+Triggered alerts are uploaded as JSON to an Azure Blob Storage container, which fires an Event Grid subscription on blob creation, which triggers a Logic App that parses the alert and sends an email notification.
 
 ## Project Status
 
-### ✅ Completed
-- GitHub repository initialization
-- Ubuntu VM deployment, Docker install/validation
-- GRFICSv3 deployment — all 7 containers healthy
-- Crossover Ethernet setup between ASUS (witcher) and Dell (beast)
-- Full SSH jump chain verified to Ubuntu VM
-- Live Modbus TCP traffic confirmed via `tcpdump` on the ICS network
-- GRFICSv3 Modbus register map identified
-- Alert rule design (R001–R004) mapped to IEC 62443 / NERC CIP / NIST SP 800-82
+### Completed
+- GRFICSv3 lab fully deployed (7 healthy Docker containers), two-laptop crossover-Ethernet-isolated setup
+- Passive Modbus TCP parsing (local and remote/SSH-based capture)
+- Detection rules R001–R004 implemented
+- Alert deduplication / rate-limiting layer
+- Azure Blob Storage → Event Grid → Logic App → email pipeline, live-tested end-to-end
+- R004 confirmed live against real unscripted network traffic
+- Automated test suite (11 tests)
 
-### 🔄 In Progress
-- Reading *Practical Industrial Cybersecurity* (Brooks & Craig) for process-monitoring grounding
-- Writing `gridwatch.py` (pyshark/tshark-based passive parser, running on the Ubuntu VM)
+### In Progress
+- R001 live-fire validation (reactor pressure / valve state)
+- R002 and R003 live-fire validation (currently unit-tested only)
 
-### ⏳ Planned
-- Process-state tracking module
-- Risk assessment / alert generation engine (R001–R004 implementation)
-- Azure Logic App + Blob Storage integration
-- Testing and validation
-- Final documentation
+### Planned
+- Final report / writeup
+- Codebase cleanup pass
 
-## Development Roadmap
+## Setup
 
-| Phase | Status |
-|---|---|
-| Environment Setup & Deployment | ✅ Completed |
-| Network & SSH Chain Verification | ✅ Completed |
-| Traffic Mirroring (tcpdump over SSH) | ✅ Completed |
-| Register Map & Alert Rule Design | ✅ Completed |
-| `gridwatch.py` (pyshark/tshark parser) | 🔄 In Progress |
-| Process-State Tracking | ⏳ Planned |
-| Risk Assessment / Alert Engine | ⏳ Planned |
-| Azure Integration | ⏳ Planned |
-| Testing & Validation | ⏳ Planned |
-| Final Documentation | ⏳ Planned |
+Copy `.env.example` to `.env` and fill in your Azure Storage connection string. Copy the relevant keys from `config.example.py` into `config.py`'s remote-capture section with your own lab's IPs/usernames — these are deliberately not committed.
 
-## Current Environment
+## Testing
 
-| Category | Technology |
-|---|---|
-| Virtualization | Oracle VirtualBox |
-| Operating System | Ubuntu Linux (VM), Windows 11 (host laptops) |
-| Containerization | Docker |
-| OT Testbed | GRFICSv3 |
-| Lab Network | Crossover Ethernet, 192.168.10.0/24 |
-| ICS Network | 192.168.95.0/24 |
-| Traffic Capture | tcpdump over SSH → pyshark/tshark |
-| Alert Forwarding | Azure Logic App |
-| Alert Storage | Azure Blob Storage |
+```
+pytest src/tests/
+```
+
+11 tests covering rule detection, deduplication, packet parsing (local and remote), and Azure upload mocking.
 
 ## Repository Structure
 
 ```
 gridwatch/
-│
 ├── README.md
+├── config.example.py
 ├── docs/
 ├── reports/
 ├── screenshots/
@@ -134,10 +109,6 @@ Research Interests: OT Security · Industrial Cybersecurity · Network Monitorin
 
 ## Acknowledgments
 
-This project uses [GRFICSv3](https://github.com/Fortiphyd/GRFICSv3), an open-source
-OT/ICS security lab developed by Fortiphyd Logic (originally with Georgia Tech).
-GRFICS is not affiliated with or endorsing this project.
+This project uses [GRFICSv3](https://github.com/Fortiphyd/GRFICSv3), an open-source OT/ICS security lab developed by Fortiphyd Logic (originally with Georgia Tech). GRFICS is not affiliated with or endorsing this project.
 
-Citation: Formby, D., Rad, M., and Beyah, R. "Lowering the Barriers to Industrial
-Control System Security with GRFICS." USENIX Workshop on Advances in Security
-Education (ASE 18).
+Citation: Formby, D., Rad, M., and Beyah, R. "Lowering the Barriers to Industrial Control System Security with GRFICS." USENIX Workshop on Advances in Security Education (ASE 18).
