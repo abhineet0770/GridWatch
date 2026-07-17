@@ -298,7 +298,7 @@ class RemoteModbusCapture:
             "ssh",
             "-J", f"{config.JUMP_USER}@{config.LAPTOP_A_IP}",
             f"{config.VM_USER}@{config.VM_IP}",
-            f"sudo tcpdump -i {config.ICS_INTERFACE} port 502 -w -"
+            f"docker exec {config.CAPTURE_CONTAINER} tcpdump -i {config.CONTAINER_CAPTURE_INTERFACE} port 502 -w -"
         ]
 
         tshark_cmd = [

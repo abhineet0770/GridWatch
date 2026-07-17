@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from gridwatch import alert_rules, config
-from gridwatch.modbus_parser import ModbusParser
+from gridwatch.modbus_parser import ModbusParser, RemoteModbusCapture
 
 
 def make_parsed_packet(
@@ -212,6 +212,101 @@ class ModbusParserTests(unittest.TestCase):
 
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed["registers"], {config.REG_VALVE_STATE: 0})
+
+
+class RemoteModbusCaptureTests(unittest.TestCase):
+    def test_parse_line_read_request_and_response(self):
+        capture = RemoteModbusCapture()
+
+        # Parse read request (func_code 4)
+        req_line = "192.168.95.10,192.168.95.2,50200,502,100,4,108,1,,1625054400.0"
+        parsed_req = capture.parse_line(req_line)
+
+        self.assertIsNotNone(parsed_req)
+        self.assertEqual(parsed_req["src_ip"], "192.168.95.10")
+        self.assertEqual(parsed_req["dst_ip"], "192.168.95.2")
+        self.assertEqual(parsed_req["trans_id"], 100)
+        self.assertEqual(parsed_req["direction"], "request")
+        self.assertEqual(parsed_req["func_code"], 4)
+        self.assertEqual(parsed_req["ref_num"], 108)
+        self.assertEqual(parsed_req["registers"], {})
+        self.assertEqual(parsed_req["values"], [])
+        self.assertEqual(parsed_req["timestamp"], datetime.fromtimestamp(1625054400.0))
+
+        # Check transaction_map has request info
+        self.assertIn(100, capture.transaction_map)
+        self.assertEqual(capture.transaction_map[100]["ref_num"], 108)
+
+        # Parse matching read response
+        resp_line = "192.168.95.2,192.168.95.10,502,50200,100,4,,,0x0bb8,1625054401.0"
+        parsed_resp = capture.parse_line(resp_line)
+
+        self.assertIsNotNone(parsed_resp)
+        self.assertEqual(parsed_resp["src_ip"], "192.168.95.2")
+        self.assertEqual(parsed_resp["dst_ip"], "192.168.95.10")
+        self.assertEqual(parsed_resp["trans_id"], 100)
+        self.assertEqual(parsed_resp["direction"], "response")
+        self.assertEqual(parsed_resp["func_code"], 4)
+        self.assertEqual(parsed_resp["ref_num"], 108)
+        self.assertEqual(parsed_resp["registers"], {108: 3000})
+        self.assertEqual(parsed_resp["values"], [3000])
+        self.assertEqual(parsed_resp["timestamp"], datetime.fromtimestamp(1625054401.0))
+
+        # Check transaction_map was cleaned up
+        self.assertNotIn(100, capture.transaction_map)
+
+    def test_parse_line_write_request(self):
+        capture = RemoteModbusCapture()
+
+        # Parse write request (func_code 6)
+        write_line = "192.168.95.10,192.168.95.2,50200,502,101,6,100,,0,1625054402.0"
+        parsed_write = capture.parse_line(write_line)
+
+        self.assertIsNotNone(parsed_write)
+        self.assertEqual(parsed_write["src_ip"], "192.168.95.10")
+        self.assertEqual(parsed_write["dst_ip"], "192.168.95.2")
+        self.assertEqual(parsed_write["trans_id"], 101)
+        self.assertEqual(parsed_write["direction"], "request")
+        self.assertEqual(parsed_write["func_code"], 6)
+        self.assertEqual(parsed_write["ref_num"], 100)
+        self.assertEqual(parsed_write["registers"], {100: 0})
+        self.assertEqual(parsed_write["values"], [0])
+        self.assertEqual(parsed_write["timestamp"], datetime.fromtimestamp(1625054402.0))
+
+    def test_parse_line_malformed_returns_none(self):
+        capture = RemoteModbusCapture()
+
+        # Short line
+        short_line = "192.168.95.10,192.168.95.2,50200,502"
+        self.assertIsNone(capture.parse_line(short_line))
+
+        # Short line with comma but fewer than 10 fields
+        self.assertIsNone(capture.parse_line("a,b,c,d,e,f,g"))
+
+    @patch("gridwatch.modbus_parser.subprocess.Popen")
+    def test_start_capture_command_construction(self, mock_popen):
+        import io
+
+        mock_proc_ssh = unittest.mock.MagicMock()
+        mock_proc_ssh.stdout = unittest.mock.MagicMock()
+        mock_proc_ssh.poll.return_value = 0
+
+        mock_proc_tshark = unittest.mock.MagicMock()
+        mock_proc_tshark.stdout = io.StringIO("")
+        mock_proc_tshark.poll.return_value = 0
+
+        mock_popen.side_effect = [mock_proc_ssh, mock_proc_tshark]
+
+        capture = RemoteModbusCapture()
+        capture.start_capture(lambda x: None)
+
+        self.assertEqual(mock_popen.call_count, 2)
+        ssh_call_args = mock_popen.call_args_list[0][0][0]
+
+        self.assertIn("docker exec", ssh_call_args[-1])
+        self.assertIn(config.CAPTURE_CONTAINER, ssh_call_args[-1])
+        self.assertIn(config.CONTAINER_CAPTURE_INTERFACE, ssh_call_args[-1])
+        self.assertNotIn("sudo tcpdump -i", ssh_call_args[-1])
 
 
 if __name__ == "__main__":
