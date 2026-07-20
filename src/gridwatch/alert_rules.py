@@ -6,15 +6,20 @@ to identify anomalous process states and suspicious Modbus TCP network actions.
 
 import ipaddress
 from datetime import datetime, time
+
 try:
     from gridwatch import config
 except ImportError:
     import config
 
 try:
-    from gridwatch.azure_alert_sink import send_alert_to_blob, get_network_zone, get_register_address
+    from gridwatch.azure_alert_sink import (
+        get_network_zone,
+        get_register_address,
+        send_alert_to_blob,
+    )
 except ImportError:
-    from azure_alert_sink import send_alert_to_blob, get_network_zone, get_register_address
+    from azure_alert_sink import get_network_zone, get_register_address, send_alert_to_blob
 
 try:
     from gridwatch.alert_dedup import deduplicator
@@ -37,19 +42,14 @@ def build_alert(
         "dst_ip": parsed_packet["dst_ip"],
     }
 
+
 def is_outside_maintenance_window(dt: datetime) -> bool:
-    """
-    Check if the given datetime is outside the configured maintenance window.
-    
-    Args:
-        dt (datetime): Timestamp of the event.
-        
-    Returns:
-        bool: True if outside the maintenance window, False otherwise.
+    """Verify if the event timestamp falls outside the configured time-based access control
+    maintenance window.
     """
     try:
-        start_h, start_m = map(int, config.MAINTENANCE_START.split(':'))
-        end_h, end_m = map(int, config.MAINTENANCE_END.split(':'))
+        start_h, start_m = map(int, config.MAINTENANCE_START.split(":"))
+        end_h, end_m = map(int, config.MAINTENANCE_END.split(":"))
     except (ValueError, AttributeError, TypeError):
         start_h, start_m = 9, 0
         end_h, end_m = 17, 0
@@ -64,21 +64,13 @@ def is_outside_maintenance_window(dt: datetime) -> bool:
         # Handles overnight maintenance windows (e.g. 22:00 to 06:00)
         return not (evt_time >= start_time or evt_time <= end_time)
 
+
 def check_r001_reactor_pressure(state: dict, parsed_packet: dict) -> dict:
+    """R001 detects a hazardous process state (pressure > threshold with outlet valve closed)
+    to prevent physical overpressure incidents (NIST SP 800-82).
     """
-    R001: Reactor pressure > 2900 kPa AND valve closed simultaneously = CRITICAL
-    
-    Checks if the process state transitions into a hazardous state.
-    
-    Args:
-        state (dict): Running state of monitored Modbus registers.
-        parsed_packet (dict): The parsed packet data.
-        
-    Returns:
-        dict or None: Alert payload if triggered, otherwise None.
-    """
-    pressure = state.get('reactor_pressure')
-    valve_closed = state.get('valve_closed')
+    pressure = state.get("reactor_pressure")
+    valve_closed = state.get("valve_closed")
 
     if pressure is not None and valve_closed is not None:
         if pressure > config.REACTOR_PRESSURE_MAX_KPA and valve_closed:
@@ -111,20 +103,19 @@ def check_r001_reactor_pressure(state: dict, parsed_packet: dict) -> dict:
                     function_code=parsed_packet["func_code"],
                     register_address=get_register_address(parsed_packet, default_val=108),
                     description=alert["description"],
-                    matched_condition=f"reactor_pressure ({pressure} kPa) > {config.REACTOR_PRESSURE_MAX_KPA} kPa AND valve_closed ({valve_closed})",
+                    matched_condition=(
+                        f"reactor_pressure ({pressure} kPa) > "
+                        f"{config.REACTOR_PRESSURE_MAX_KPA} kPa AND "
+                        f"valve_closed ({valve_closed})"
+                    ),
                 )
             return alert
     return None
 
+
 def check_r002_dmz_write(parsed_packet: dict) -> dict:
-    """
-    R002: FC06/FC16 write originating from DMZ network (192.168.90.x) to PLC = CRITICAL
-    
-    Args:
-        parsed_packet (dict): The parsed packet data.
-        
-    Returns:
-        dict or None: Alert payload if triggered, otherwise None.
+    """R002 detects unauthorized Modbus write commands originating from the DMZ to
+    enforce network segmentation boundaries (IEC 62443 / NERC CIP).
     """
     src_ip = parsed_packet["src_ip"]
     dst_ip = parsed_packet["dst_ip"]
@@ -150,7 +141,9 @@ def check_r002_dmz_write(parsed_packet: dict) -> dict:
                     reg_addr = get_register_address(parsed_packet)
                     dedup_key = f"{src_ip}:{reg_addr}"
                     regs = parsed_packet.get("registers", {})
-                    fingerprint = f"fc_{func_code}_val_{sorted(regs.items())}" if regs else f"fc_{func_code}"
+                    fingerprint = (
+                        f"fc_{func_code}_val_{sorted(regs.items())}" if regs else f"fc_{func_code}"
+                    )
                     if deduplicator.should_alert(
                         rule_id="R002",
                         dedup_key=dedup_key,
@@ -167,22 +160,21 @@ def check_r002_dmz_write(parsed_packet: dict) -> dict:
                             function_code=func_code,
                             register_address=reg_addr,
                             description=alert["description"],
-                            matched_condition=f"direction == request AND dst_ip == {config.PLC_IP} AND func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES AND src_ip ({src_ip}) in DMZ_SUBNET",
+                            matched_condition=(
+                                f"direction == request AND dst_ip == {config.PLC_IP} AND "
+                                f"func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES "
+                                f"AND src_ip ({src_ip}) in DMZ_SUBNET"
+                            ),
                         )
                     return alert
             except ValueError:
                 pass
     return None
 
+
 def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
-    """
-    R003: Engineering Workstation (EWS) writes to PLC outside a defined maintenance window = HIGH
-    
-    Args:
-        parsed_packet (dict): The parsed packet data.
-        
-    Returns:
-        dict or None: Alert payload if triggered, otherwise None.
+    """R003 detects configuration write commands from the EWS outside authorized hours
+    to prevent unauthorized logic modifications (NERC CIP).
     """
     src_ip = parsed_packet["src_ip"]
     dst_ip = parsed_packet["dst_ip"]
@@ -205,7 +197,9 @@ def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
                     parsed_packet,
                 )
                 regs = parsed_packet.get("registers", {})
-                fingerprint = f"fc_{func_code}_val_{sorted(regs.items())}" if regs else f"fc_{func_code}"
+                fingerprint = (
+                    f"fc_{func_code}_val_{sorted(regs.items())}" if regs else f"fc_{func_code}"
+                )
                 if deduplicator.should_alert(
                     rule_id="R003",
                     dedup_key=src_ip,
@@ -222,20 +216,20 @@ def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
                         function_code=func_code,
                         register_address=get_register_address(parsed_packet),
                         description=alert["description"],
-                        matched_condition=f"direction == request AND src_ip ({src_ip}) == EWS_IP AND dst_ip ({dst_ip}) == PLC_IP AND func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES AND outside maintenance window ({config.MAINTENANCE_START}-{config.MAINTENANCE_END})",
+                        matched_condition=(
+                            f"direction == request AND src_ip ({src_ip}) == EWS_IP AND "
+                            f"dst_ip ({dst_ip}) == PLC_IP AND func_code ({func_code}) in "
+                            "config.SUSPICIOUS_FUNCTION_CODES AND outside maintenance window "
+                            f"({config.MAINTENANCE_START}-{config.MAINTENANCE_END})"
+                        ),
                     )
                 return alert
     return None
 
+
 def check_r004_unknown_ip(parsed_packet: dict) -> dict:
-    """
-    R004: Unknown/unrecognized IP address appears on the ICS network (192.168.95.0/24) = HIGH
-    
-    Args:
-        parsed_packet (dict): The parsed packet data.
-        
-    Returns:
-        dict or None: Alert payload if triggered, otherwise None.
+    """R004 detects unrecognized/unauthorized IP addresses on the local ICS subnet to
+    identify potential rogue devices (IEC 62443 / NERC CIP).
     """
     for ip in (parsed_packet["src_ip"], parsed_packet["dst_ip"]):
         try:
@@ -267,33 +261,28 @@ def check_r004_unknown_ip(parsed_packet: dict) -> dict:
                         function_code=parsed_packet["func_code"],
                         register_address=get_register_address(parsed_packet),
                         description=alert["description"],
-                        matched_condition=f"IP ({ip}) belongs to ICS subnet ({config.ICS_SUBNET_STR}) and not in KNOWN_GOOD_IPS whitelist",
+                        matched_condition=(
+                            f"IP ({ip}) belongs to ICS subnet ({config.ICS_SUBNET_STR}) "
+                            "and not in KNOWN_GOOD_IPS whitelist"
+                        ),
                     )
                 return alert
         except ValueError:
             pass
     return None
 
+
 def check_rules(state: dict, parsed_packet: dict) -> list:
+    """Process an incoming packet, update register states, and evaluate all active
+    detection rules.
     """
-    Process an incoming parsed packet, update register states, and verify all alert rules.
-    
-    Args:
-        state (dict): Shared state representing the running process registers.
-        parsed_packet (dict): The parsed packet metadata.
-        
-    Returns:
-        list: A list of triggered alert dictionaries.
-    """
-    # 1. Update the process state with any registers contained in this packet
     packet_regs = parsed_packet.get("registers", {})
     if config.REG_REACTOR_PRESSURE in packet_regs:
         state["reactor_pressure"] = packet_regs[config.REG_REACTOR_PRESSURE]
-    
-    if config.REG_VALVE_STATE in packet_regs:
-        state["valve_closed"] = (packet_regs[config.REG_VALVE_STATE] == config.VALVE_CLOSED_VALUE)
 
-    # 2. Check rules and accumulate alerts
+    if config.REG_VALVE_STATE in packet_regs:
+        state["valve_closed"] = packet_regs[config.REG_VALVE_STATE] == config.VALVE_CLOSED_VALUE
+
     alerts = []
     rule_results = (
         check_r001_reactor_pressure(state, parsed_packet),

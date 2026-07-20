@@ -40,7 +40,9 @@ def make_packet(
     }
 
 
-def replay_event(state: dict, packet_factory: Callable[[], dict], delay_seconds: float = 1.5) -> None:
+def replay_event(
+    state: dict, packet_factory: Callable[[], dict], delay_seconds: float = 1.5
+) -> None:
     packet = packet_factory()
     print_parsed_packet(packet)
     alerts = check_rules(state, packet)

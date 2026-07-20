@@ -25,12 +25,7 @@ logger = logging.getLogger(__name__)
 
 class ModbusParser:
     def __init__(self, interface: str):
-        """
-        Initialize the parser with the target network interface.
-
-        Args:
-            interface (str): Name of the network interface to capture on.
-        """
+        """Initialize the Modbus parser with the target network interface."""
         self.interface = interface
         self.transaction_map: dict[int, dict[str, int | str | None]] = {}
 
@@ -62,11 +57,8 @@ class ModbusParser:
         return values
 
     def parse_packet(self, packet) -> dict | None:
-        """
-        Extract Modbus TCP fields from a captured packet.
-
-        Correlates read responses with read requests to map register numbers to
-        their values.
+        """Extract Modbus TCP fields from a captured packet, correlating read responses with
+        requests using transaction IDs.
         """
         if "mbtcp" not in packet or "modbus" not in packet:
             return None
@@ -140,10 +132,8 @@ class ModbusParser:
         }
 
     def start_capture(self, callback: Callable[[dict], None]) -> None:
-        """
-        Begin capturing Modbus traffic on the configured interface.
-
-        Invokes `callback` with parsed packet metadata when a Modbus packet is detected.
+        """Begin capturing Modbus traffic locally, invoking callback on each parsed Modbus
+        packet.
         """
         try:
             asyncio.get_event_loop()
@@ -166,29 +156,14 @@ class ModbusParser:
 
 class RemoteModbusCapture:
     def __init__(self):
-        """
-        Initialize the remote Modbus capture.
-        Uses SSH jump chain parameters from config.py.
-        """
+        """Initialize the remote Modbus capture using configured SSH jump chain parameters."""
         self.transaction_map: dict[int, dict[str, int | str | None]] = {}
         self.raw_lines_printed = 0
 
     def parse_line(self, line: str) -> dict | None:
-        """
-        Parse a single CSV line from tshark stdout.
-        
-        Fields selected:
-        0: ip.src
-        1: ip.dst
-        2: tcp.srcport
-        3: tcp.dstport
-        4: mbtcp.trans_id
-        5: modbus.func_code
-        6: modbus.reference_num
-        7: modbus.word_cnt
-        8:-1: modbus.regval_uint16 (could be multiple values, or empty)
-        -1: frame.time_epoch
-        """
+        """Parse a single CSV line from tshark stdout using index mappings for Modbus fields."""
+        # Field mapping: 0=src_ip, 1=dst_ip, 2=src_port, 3=dst_port, 4=trans_id,
+        # 5=func_code, 6=ref_num, 7=word_cnt, 8:-1=reg_values, -1=time_epoch
         parts = line.split(",")
         if len(parts) < 10:
             return None
@@ -289,33 +264,46 @@ class RemoteModbusCapture:
         }
 
     def start_capture(self, callback: Callable[[dict], None]) -> None:
-        """
-        Begin remote capture by chaining ssh and tshark subprocesses.
-        Continuously reads tshark's stdout line by line, parses it,
-        and invokes `callback` with parsed packet metadata.
+        """Begin remote capture by chaining SSH and tshark subprocesses, invoking callback on
+        each parsed packet line.
         """
         ssh_cmd = [
             "ssh",
-            "-J", f"{config.JUMP_USER}@{config.LAPTOP_A_IP}",
+            "-J",
+            f"{config.JUMP_USER}@{config.LAPTOP_A_IP}",
             f"{config.VM_USER}@{config.VM_IP}",
-            f"docker exec {config.CAPTURE_CONTAINER} tcpdump -i {config.CONTAINER_CAPTURE_INTERFACE} port 502 -w -"
+            f"docker exec {config.CAPTURE_CONTAINER} tcpdump -i "
+            f"{config.CONTAINER_CAPTURE_INTERFACE} port 502 -w -",
         ]
 
         tshark_cmd = [
             "tshark",
-            "-i", "-",
-            "-T", "fields",
-            "-e", "ip.src",
-            "-e", "ip.dst",
-            "-e", "tcp.srcport",
-            "-e", "tcp.dstport",
-            "-e", "mbtcp.trans_id",
-            "-e", "modbus.func_code",
-            "-e", "modbus.reference_num",
-            "-e", "modbus.word_cnt",
-            "-e", "modbus.regval_uint16",
-            "-e", "frame.time_epoch",
-            "-E", "separator=,"
+            "-i",
+            "-",
+            "-T",
+            "fields",
+            "-e",
+            "ip.src",
+            "-e",
+            "ip.dst",
+            "-e",
+            "tcp.srcport",
+            "-e",
+            "tcp.dstport",
+            "-e",
+            "mbtcp.trans_id",
+            "-e",
+            "modbus.func_code",
+            "-e",
+            "modbus.reference_num",
+            "-e",
+            "modbus.word_cnt",
+            "-e",
+            "modbus.regval_uint16",
+            "-e",
+            "frame.time_epoch",
+            "-E",
+            "separator=,",
         ]
 
         logger.info(f"Starting remote capture: {' '.join(ssh_cmd)} | {' '.join(tshark_cmd)}")
@@ -350,7 +338,9 @@ class RemoteModbusCapture:
                     continue
 
                 if self.raw_lines_printed < 5:
-                    print(f"[Remote Capture] Raw tshark line {self.raw_lines_printed + 1}: {line_str}")
+                    print(
+                        f"[Remote Capture] Raw tshark line {self.raw_lines_printed + 1}: {line_str}"
+                    )
                     self.raw_lines_printed += 1
 
                 try:

@@ -22,11 +22,11 @@ EWS_IP = "192.168.95.10"
 # Whitelist of recognized IP addresses on the ICS network (192.168.95.0/24)
 # Any IP on b-ics-net not in this set triggers R004.
 KNOWN_GOOD_IPS = {
-    "192.168.95.1",   # Gateway/Router
-    "192.168.95.2",   # PLC (Programmable Logic Controller)
+    "192.168.95.1",  # Gateway/Router
+    "192.168.95.2",  # PLC (Programmable Logic Controller)
     "192.168.95.10",  # EWS (Engineering Workstation)
     "192.168.95.20",  # HMI (Human Machine Interface)
-    "192.168.95.100", # Passive Monitoring Interface (Self)
+    "192.168.95.100",  # Passive Monitoring Interface (Self)
 }
 
 # Modbus Register Map
@@ -35,7 +35,7 @@ KNOWN_GOOD_IPS = {
 # legitimately appears only under FC04 (Read Input Registers), never FC03
 # (Read Holding Registers), and never as the target of FC06/FC16 writes.
 REG_VALVE_STATE = 100
-REG_REACTOR_PRESSURE = 108       # IR 108: Reactor Pressure (kPa)
+REG_REACTOR_PRESSURE = 108  # IR 108: Reactor Pressure (kPa)
 VALVE_CLOSED_VALUE = 0  # 0 indicates valve is closed, non-zero is open
 
 # Modbus Function Codes
@@ -48,11 +48,12 @@ SUSPICIOUS_FUNCTION_CODES = {FC_WRITE_SINGLE, FC_WRITE_MULTIPLE}
 REACTOR_PRESSURE_MAX_KPA = 2900.0  # R001: Pressure > 2900 kPa
 # Deadband for R001 pressure alerts - prevents alert flapping
 # 3% of setpoint, per ISA-18.2 deadband guidance (2-5% typical)
-PRESSURE_DEADBAND_PCT = 0.03 
+PRESSURE_DEADBAND_PCT = 0.03
 
 # Deduplication / Rate Limiting Configuration
 # Defines the cooldown window for suppressing duplicate alerts (in seconds)
 DEDUP_COOLDOWN_SECONDS = 300
+DEDUP_TTL_SECONDS = 4 * DEDUP_COOLDOWN_SECONDS
 
 # Maintenance Window (R003: EWS writes to PLC must be within this window)
 # Format: "HH:MM" in local VM time
@@ -71,5 +72,5 @@ LAPTOP_A_IP = "laptop_a_ip"
 VM_USER = "vm_user"
 VM_IP = "vm_ip"
 ICS_INTERFACE = "ics_interface"
-CAPTURE_CONTAINER = "capture_container"        # e.g. "plc"
+CAPTURE_CONTAINER = "capture_container"  # e.g. "plc"
 CONTAINER_CAPTURE_INTERFACE = "container_interface"  # e.g. "eth1"

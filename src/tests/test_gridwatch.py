@@ -1,9 +1,10 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from gridwatch import alert_rules, config
+from gridwatch.alert_dedup import AlertDeduplicator
 from gridwatch.modbus_parser import ModbusParser, RemoteModbusCapture
 
 
@@ -307,6 +308,63 @@ class RemoteModbusCaptureTests(unittest.TestCase):
         self.assertIn(config.CAPTURE_CONTAINER, ssh_call_args[-1])
         self.assertIn(config.CONTAINER_CAPTURE_INTERFACE, ssh_call_args[-1])
         self.assertNotIn("sudo tcpdump -i", ssh_call_args[-1])
+
+
+class DeduplicatorTests(unittest.TestCase):
+    def test_expired_entry_evicted_and_treated_as_first_occurrence(self):
+        dedup = AlertDeduplicator(cooldown_seconds=10, ttl_seconds=40)
+        t0 = datetime(2026, 7, 20, 12, 0, 0)
+        self.assertTrue(dedup.should_alert("R004", "192.168.95.50", "unauthorized_ip", now=t0))
+        self.assertFalse(
+            dedup.should_alert(
+                "R004", "192.168.95.50", "unauthorized_ip", now=t0 + timedelta(seconds=5)
+            )
+        )
+        self.assertTrue(
+            dedup.should_alert(
+                "R004", "192.168.95.50", "unauthorized_ip", now=t0 + timedelta(seconds=41)
+            )
+        )
+
+    def test_live_entry_suppressed_within_cooldown(self):
+        dedup = AlertDeduplicator(cooldown_seconds=10, ttl_seconds=40)
+        t0 = datetime(2026, 7, 20, 12, 0, 0)
+        self.assertTrue(dedup.should_alert("R004", "192.168.95.50", "unauthorized_ip", now=t0))
+        self.assertFalse(
+            dedup.should_alert(
+                "R004", "192.168.95.50", "unauthorized_ip", now=t0 + timedelta(seconds=5)
+            )
+        )
+
+    def test_store_does_not_grow_unbounded(self):
+        dedup = AlertDeduplicator(cooldown_seconds=10, ttl_seconds=40)
+        t0 = datetime(2026, 7, 20, 12, 0, 0)
+        for i in range(10):
+            dedup.should_alert("R004", f"192.168.95.{i}", "unauthorized_ip", now=t0)
+        self.assertEqual(len(dedup.alerts), 10)
+        dedup.should_alert(
+            "R004", "192.168.95.99", "unauthorized_ip", now=t0 + timedelta(seconds=41)
+        )
+        self.assertEqual(len(dedup.alerts), 1)
+
+    def test_stale_queue_entry_does_not_evict_live_key(self):
+        dedup = AlertDeduplicator(cooldown_seconds=30, ttl_seconds=40)
+        t0 = datetime(2026, 7, 20, 12, 0, 0)
+        self.assertTrue(dedup.should_alert("R004", "192.168.95.50", "unauthorized_ip", now=t0))
+        self.assertTrue(
+            dedup.should_alert(
+                "R004", "192.168.95.50", "unauthorized_ip", now=t0 + timedelta(seconds=35)
+            )
+        )
+        dedup.should_alert(
+            "R004", "192.168.95.99", "unauthorized_ip", now=t0 + timedelta(seconds=41)
+        )
+        self.assertIn(("R004", "192.168.95.50"), dedup.alerts)
+        self.assertFalse(
+            dedup.should_alert(
+                "R004", "192.168.95.50", "unauthorized_ip", now=t0 + timedelta(seconds=42)
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -3,14 +3,15 @@ Azure Blob Storage integration module for GridWatch.
 Handles formatting and uploading alert records to the Azure Blob 'alerts' container.
 """
 
-import os
-import json
-import uuid
-import logging
 import ipaddress
-from datetime import datetime, timezone
-from dotenv import load_dotenv
+import json
+import logging
+import os
+import uuid
+from datetime import UTC, datetime
+
 from azure.storage.blob import BlobServiceClient, ContentSettings
+from dotenv import load_dotenv
 
 try:
     from gridwatch import config
@@ -72,7 +73,7 @@ def send_alert_to_blob(
         return None
 
     alert_id = str(uuid.uuid4())
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     payload = {
         "alert_id": alert_id,
@@ -86,13 +87,13 @@ def send_alert_to_blob(
         "function_code": function_code,
         "register_address": register_address,
         "description": description,
-        "matched_condition": matched_condition
+        "matched_condition": matched_condition,
     }
 
     try:
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         container_client = blob_service_client.get_container_client("alerts")
-        
+
         # Try to create container if it doesn't already exist
         try:
             container_client.create_container()
@@ -101,10 +102,10 @@ def send_alert_to_blob(
 
         blob_name = f"{rule_id}-{alert_id}.json"
         blob_client = container_client.get_blob_client(blob_name)
-        
+
         json_data = json.dumps(payload, indent=2)
         content_settings = ContentSettings(content_type="application/json")
-        
+
         blob_client.upload_blob(json_data, content_settings=content_settings)
         return alert_id
     except Exception as e:
