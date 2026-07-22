@@ -367,5 +367,87 @@ class DeduplicatorTests(unittest.TestCase):
         )
 
 
+class SharedPipelineAndCLITests(unittest.TestCase):
+    @patch("gridwatch.alert_rules.send_alert_to_blob")
+    def test_process_packet_emit_azure_false_does_not_call_blob(self, mock_send_alert):
+        from gridwatch.gridwatch import process_packet
+
+        state = {}
+        packet = make_parsed_packet(
+            src_ip="192.168.90.25",
+            dst_ip=config.PLC_IP,
+            func_code=config.FC_WRITE_SINGLE,
+            direction="request",
+        )
+        alerts = process_packet(packet, state, emit_azure=False)
+        self.assertTrue(len(alerts) > 0)
+        self.assertEqual(alerts[0]["rule_id"], "R002")
+        mock_send_alert.assert_not_called()
+
+    @patch("gridwatch.alert_rules.send_alert_to_blob")
+    def test_r001_crafted_sequence_via_shared_pipeline(self, mock_send_alert):
+        from gridwatch.gridwatch import process_packet
+
+        state = {"reactor_pressure": None, "valve_closed": None}
+
+        # Step 1: Pressure packet arrives (3000 kPa > 2900 max)
+        pressure_packet = make_parsed_packet(
+            src_ip=config.PLC_IP,
+            dst_ip=config.EWS_IP,
+            func_code=4,
+            direction="response",
+            registers={config.REG_REACTOR_PRESSURE: 3000},
+        )
+        alerts1 = process_packet(pressure_packet, state, emit_azure=False)
+        self.assertEqual(alerts1, [])
+        self.assertEqual(state["reactor_pressure"], 3000)
+
+        # Step 2: Valve packet arrives (valve closed)
+        valve_packet = make_parsed_packet(
+            src_ip=config.EWS_IP,
+            dst_ip=config.PLC_IP,
+            func_code=config.FC_WRITE_SINGLE,
+            direction="request",
+            registers={config.REG_VALVE_STATE: config.VALVE_CLOSED_VALUE},
+        )
+        alerts2 = process_packet(valve_packet, state, emit_azure=False)
+        self.assertTrue(any(a["rule_id"] == "R001" for a in alerts2))
+        self.assertTrue(state["valve_closed"])
+
+    @patch("gridwatch.alert_rules.send_alert_to_blob")
+    def test_watch_state_display_path_does_not_emit_alerts_or_azure(self, mock_send_alert):
+        from gridwatch.gridwatch import format_watch_state_line, process_packet
+
+        state = {"reactor_pressure": None, "valve_closed": None}
+        watch_dedup = AlertDeduplicator()
+
+        pressure_packet = make_parsed_packet(
+            src_ip=config.PLC_IP,
+            dst_ip=config.EWS_IP,
+            func_code=4,
+            direction="response",
+            registers={config.REG_REACTOR_PRESSURE: 2450},
+        )
+
+        alerts = process_packet(pressure_packet, state, emit_azure=False, deduplicator=watch_dedup)
+        self.assertEqual(alerts, [])
+        mock_send_alert.assert_not_called()
+
+        line = format_watch_state_line(pressure_packet, state)
+        self.assertIn("pressure 2450/2900 kPa", line)
+        self.assertIn("valve UNKNOWN", line)
+        self.assertIn("R001 condition NOT met", line)
+
+    def test_replay_invalid_pcap_raises_exit_1(self):
+        from typer.testing import CliRunner
+
+        from gridwatch.gridwatch import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["replay", "--pcap", "non_existent_file.pcap"])
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("PCAP file not found", result.output)
+
+
 if __name__ == "__main__":
     unittest.main()

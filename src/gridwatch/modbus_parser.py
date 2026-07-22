@@ -131,7 +131,9 @@ class ModbusParser:
             "values": values,
         }
 
-    def start_capture(self, callback: Callable[[dict], None]) -> None:
+    def start_capture(
+        self, callback: Callable[[dict], None], output_file: str | None = None
+    ) -> None:
         """Begin capturing Modbus traffic locally, invoking callback on each parsed Modbus
         packet.
         """
@@ -143,6 +145,7 @@ class ModbusParser:
         capture = pyshark.LiveCapture(
             interface=self.interface,
             bpf_filter=f"tcp port {config.MODBUS_PORT}",
+            output_file=output_file,
         )
 
         for packet in capture.sniff_continuously():

@@ -22,9 +22,11 @@ except ImportError:
     from azure_alert_sink import get_network_zone, get_register_address, send_alert_to_blob
 
 try:
-    from gridwatch.alert_dedup import deduplicator
+    from gridwatch.alert_dedup import AlertDeduplicator
+    from gridwatch.alert_dedup import deduplicator as default_deduplicator
 except ImportError:
-    from alert_dedup import deduplicator
+    from alert_dedup import AlertDeduplicator
+    from alert_dedup import deduplicator as default_deduplicator
 
 
 def build_alert(
@@ -65,12 +67,19 @@ def is_outside_maintenance_window(dt: datetime) -> bool:
         return not (evt_time >= start_time or evt_time <= end_time)
 
 
-def check_r001_reactor_pressure(state: dict, parsed_packet: dict) -> dict:
+def check_r001_reactor_pressure(
+    state: dict,
+    parsed_packet: dict,
+    *,
+    emit_azure: bool = True,
+    deduplicator: AlertDeduplicator | None = None,
+) -> dict | None:
     """R001 detects a hazardous process state (pressure > threshold with outlet valve closed)
     to prevent physical overpressure incidents (NIST SP 800-82).
     """
     pressure = state.get("reactor_pressure")
     valve_closed = state.get("valve_closed")
+    dedup = deduplicator if deduplicator is not None else default_deduplicator
 
     if pressure is not None and valve_closed is not None:
         if pressure > config.REACTOR_PRESSURE_MAX_KPA and valve_closed:
@@ -87,33 +96,39 @@ def check_r001_reactor_pressure(state: dict, parsed_packet: dict) -> dict:
             band_width = config.REACTOR_PRESSURE_MAX_KPA * config.PRESSURE_DEADBAND_PCT
             pressure_band = int(pressure // band_width) * band_width
             fingerprint = f"pressure_band_{pressure_band}_valve_{valve_closed}"
-            if deduplicator.should_alert(
+            if dedup.should_alert(
                 rule_id="R001",
                 dedup_key=config.PLC_IP,
                 fingerprint=fingerprint,
                 now=parsed_packet.get("timestamp"),
             ):
-                send_alert_to_blob(
-                    rule_id="R001",
-                    severity="CRITICAL",
-                    source_ip=parsed_packet["src_ip"],
-                    destination_ip=parsed_packet["dst_ip"],
-                    network_zone=get_network_zone(parsed_packet["src_ip"]),
-                    protocol="Modbus/TCP",
-                    function_code=parsed_packet["func_code"],
-                    register_address=get_register_address(parsed_packet, default_val=108),
-                    description=alert["description"],
-                    matched_condition=(
-                        f"reactor_pressure ({pressure} kPa) > "
-                        f"{config.REACTOR_PRESSURE_MAX_KPA} kPa AND "
-                        f"valve_closed ({valve_closed})"
-                    ),
-                )
+                if emit_azure:
+                    send_alert_to_blob(
+                        rule_id="R001",
+                        severity="CRITICAL",
+                        source_ip=parsed_packet["src_ip"],
+                        destination_ip=parsed_packet["dst_ip"],
+                        network_zone=get_network_zone(parsed_packet["src_ip"]),
+                        protocol="Modbus/TCP",
+                        function_code=parsed_packet["func_code"],
+                        register_address=get_register_address(parsed_packet, default_val=108),
+                        description=alert["description"],
+                        matched_condition=(
+                            f"reactor_pressure ({pressure} kPa) > "
+                            f"{config.REACTOR_PRESSURE_MAX_KPA} kPa AND "
+                            f"valve_closed ({valve_closed})"
+                        ),
+                    )
             return alert
     return None
 
 
-def check_r002_dmz_write(parsed_packet: dict) -> dict:
+def check_r002_dmz_write(
+    parsed_packet: dict,
+    *,
+    emit_azure: bool = True,
+    deduplicator: AlertDeduplicator | None = None,
+) -> dict | None:
     """R002 detects unauthorized Modbus write commands originating from the DMZ to
     enforce network segmentation boundaries (IEC 62443 / NERC CIP).
     """
@@ -121,6 +136,7 @@ def check_r002_dmz_write(parsed_packet: dict) -> dict:
     dst_ip = parsed_packet["dst_ip"]
     func_code = parsed_packet["func_code"]
     direction = parsed_packet.get("direction")
+    dedup = deduplicator if deduplicator is not None else default_deduplicator
 
     # Only inspect requests targeting the PLC
     if direction == "request" and dst_ip == config.PLC_IP:
@@ -144,35 +160,41 @@ def check_r002_dmz_write(parsed_packet: dict) -> dict:
                     fingerprint = (
                         f"fc_{func_code}_val_{sorted(regs.items())}" if regs else f"fc_{func_code}"
                     )
-                    if deduplicator.should_alert(
+                    if dedup.should_alert(
                         rule_id="R002",
                         dedup_key=dedup_key,
                         fingerprint=fingerprint,
                         now=parsed_packet.get("timestamp"),
                     ):
-                        send_alert_to_blob(
-                            rule_id="R002",
-                            severity="CRITICAL",
-                            source_ip=src_ip,
-                            destination_ip=dst_ip,
-                            network_zone="DMZ",
-                            protocol="Modbus/TCP",
-                            function_code=func_code,
-                            register_address=reg_addr,
-                            description=alert["description"],
-                            matched_condition=(
-                                f"direction == request AND dst_ip == {config.PLC_IP} AND "
-                                f"func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES "
-                                f"AND src_ip ({src_ip}) in DMZ_SUBNET"
-                            ),
-                        )
+                        if emit_azure:
+                            send_alert_to_blob(
+                                rule_id="R002",
+                                severity="CRITICAL",
+                                source_ip=src_ip,
+                                destination_ip=dst_ip,
+                                network_zone="DMZ",
+                                protocol="Modbus/TCP",
+                                function_code=func_code,
+                                register_address=reg_addr,
+                                description=alert["description"],
+                                matched_condition=(
+                                    f"direction == request AND dst_ip == {config.PLC_IP} AND "
+                                    f"func_code ({func_code}) in config.SUSPICIOUS_FUNCTION_CODES "
+                                    f"AND src_ip ({src_ip}) in DMZ_SUBNET"
+                                ),
+                            )
                     return alert
             except ValueError:
                 pass
     return None
 
 
-def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
+def check_r003_ews_write_out_of_hours(
+    parsed_packet: dict,
+    *,
+    emit_azure: bool = True,
+    deduplicator: AlertDeduplicator | None = None,
+) -> dict | None:
     """R003 detects configuration write commands from the EWS outside authorized hours
     to prevent unauthorized logic modifications (NERC CIP).
     """
@@ -181,6 +203,7 @@ def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
     func_code = parsed_packet["func_code"]
     direction = parsed_packet.get("direction")
     timestamp = parsed_packet["timestamp"]
+    dedup = deduplicator if deduplicator is not None else default_deduplicator
 
     # Check if a write query comes from the EWS targeting the PLC
     if direction == "request" and src_ip == config.EWS_IP and dst_ip == config.PLC_IP:
@@ -200,37 +223,44 @@ def check_r003_ews_write_out_of_hours(parsed_packet: dict) -> dict:
                 fingerprint = (
                     f"fc_{func_code}_val_{sorted(regs.items())}" if regs else f"fc_{func_code}"
                 )
-                if deduplicator.should_alert(
+                if dedup.should_alert(
                     rule_id="R003",
                     dedup_key=src_ip,
                     fingerprint=fingerprint,
                     now=parsed_packet.get("timestamp"),
                 ):
-                    send_alert_to_blob(
-                        rule_id="R003",
-                        severity="HIGH",
-                        source_ip=src_ip,
-                        destination_ip=dst_ip,
-                        network_zone=get_network_zone(src_ip),
-                        protocol="Modbus/TCP",
-                        function_code=func_code,
-                        register_address=get_register_address(parsed_packet),
-                        description=alert["description"],
-                        matched_condition=(
-                            f"direction == request AND src_ip ({src_ip}) == EWS_IP AND "
-                            f"dst_ip ({dst_ip}) == PLC_IP AND func_code ({func_code}) in "
-                            "config.SUSPICIOUS_FUNCTION_CODES AND outside maintenance window "
-                            f"({config.MAINTENANCE_START}-{config.MAINTENANCE_END})"
-                        ),
-                    )
+                    if emit_azure:
+                        send_alert_to_blob(
+                            rule_id="R003",
+                            severity="HIGH",
+                            source_ip=src_ip,
+                            destination_ip=dst_ip,
+                            network_zone=get_network_zone(src_ip),
+                            protocol="Modbus/TCP",
+                            function_code=func_code,
+                            register_address=get_register_address(parsed_packet),
+                            description=alert["description"],
+                            matched_condition=(
+                                f"direction == request AND src_ip ({src_ip}) == EWS_IP AND "
+                                f"dst_ip ({dst_ip}) == PLC_IP AND func_code ({func_code}) in "
+                                "config.SUSPICIOUS_FUNCTION_CODES AND outside maintenance window "
+                                f"({config.MAINTENANCE_START}-{config.MAINTENANCE_END})"
+                            ),
+                        )
                 return alert
     return None
 
 
-def check_r004_unknown_ip(parsed_packet: dict) -> dict:
+def check_r004_unknown_ip(
+    parsed_packet: dict,
+    *,
+    emit_azure: bool = True,
+    deduplicator: AlertDeduplicator | None = None,
+) -> dict | None:
     """R004 detects unrecognized/unauthorized IP addresses on the local ICS subnet to
     identify potential rogue devices (IEC 62443 / NERC CIP).
     """
+    dedup = deduplicator if deduplicator is not None else default_deduplicator
     for ip in (parsed_packet["src_ip"], parsed_packet["dst_ip"]):
         try:
             addr = ipaddress.ip_address(ip)
@@ -245,34 +275,41 @@ def check_r004_unknown_ip(parsed_packet: dict) -> dict:
                     ),
                     parsed_packet,
                 )
-                if deduplicator.should_alert(
+                if dedup.should_alert(
                     rule_id="R004",
                     dedup_key=ip,
                     fingerprint="unauthorized_ip",
                     now=parsed_packet.get("timestamp"),
                 ):
-                    send_alert_to_blob(
-                        rule_id="R004",
-                        severity="HIGH",
-                        source_ip=parsed_packet["src_ip"],
-                        destination_ip=parsed_packet["dst_ip"],
-                        network_zone="ICS",
-                        protocol="Modbus/TCP",
-                        function_code=parsed_packet["func_code"],
-                        register_address=get_register_address(parsed_packet),
-                        description=alert["description"],
-                        matched_condition=(
-                            f"IP ({ip}) belongs to ICS subnet ({config.ICS_SUBNET_STR}) "
-                            "and not in KNOWN_GOOD_IPS whitelist"
-                        ),
-                    )
+                    if emit_azure:
+                        send_alert_to_blob(
+                            rule_id="R004",
+                            severity="HIGH",
+                            source_ip=parsed_packet["src_ip"],
+                            destination_ip=parsed_packet["dst_ip"],
+                            network_zone="ICS",
+                            protocol="Modbus/TCP",
+                            function_code=parsed_packet["func_code"],
+                            register_address=get_register_address(parsed_packet),
+                            description=alert["description"],
+                            matched_condition=(
+                                f"IP ({ip}) belongs to ICS subnet ({config.ICS_SUBNET_STR}) "
+                                "and not in KNOWN_GOOD_IPS whitelist"
+                            ),
+                        )
                 return alert
         except ValueError:
             pass
     return None
 
 
-def check_rules(state: dict, parsed_packet: dict) -> list:
+def check_rules(
+    state: dict,
+    parsed_packet: dict,
+    *,
+    emit_azure: bool = True,
+    deduplicator: AlertDeduplicator | None = None,
+) -> list[dict]:
     """Process an incoming packet, update register states, and evaluate all active
     detection rules.
     """
@@ -285,10 +322,14 @@ def check_rules(state: dict, parsed_packet: dict) -> list:
 
     alerts = []
     rule_results = (
-        check_r001_reactor_pressure(state, parsed_packet),
-        check_r002_dmz_write(parsed_packet),
-        check_r003_ews_write_out_of_hours(parsed_packet),
-        check_r004_unknown_ip(parsed_packet),
+        check_r001_reactor_pressure(
+            state, parsed_packet, emit_azure=emit_azure, deduplicator=deduplicator
+        ),
+        check_r002_dmz_write(parsed_packet, emit_azure=emit_azure, deduplicator=deduplicator),
+        check_r003_ews_write_out_of_hours(
+            parsed_packet, emit_azure=emit_azure, deduplicator=deduplicator
+        ),
+        check_r004_unknown_ip(parsed_packet, emit_azure=emit_azure, deduplicator=deduplicator),
     )
 
     for alert in rule_results:
