@@ -275,8 +275,9 @@ class RemoteModbusCapture:
             "-J",
             f"{config.JUMP_USER}@{config.LAPTOP_A_IP}",
             f"{config.VM_USER}@{config.VM_IP}",
-            f"docker exec {config.CAPTURE_CONTAINER} tcpdump -i "
-            f"{config.CONTAINER_CAPTURE_INTERFACE} port 502 -w -",
+            "sudo -n nsenter -t "
+            f"$(docker inspect -f '{{{{.State.Pid}}}}' {config.CAPTURE_CONTAINER}) "
+            f"-n tcpdump -i {config.CONTAINER_CAPTURE_INTERFACE} port 502 -w -",
         ]
 
         tshark_cmd = [

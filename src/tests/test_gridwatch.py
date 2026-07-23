@@ -304,7 +304,9 @@ class RemoteModbusCaptureTests(unittest.TestCase):
         self.assertEqual(mock_popen.call_count, 2)
         ssh_call_args = mock_popen.call_args_list[0][0][0]
 
-        self.assertIn("docker exec", ssh_call_args[-1])
+        self.assertIn("nsenter", ssh_call_args[-1])
+        self.assertIn("docker inspect", ssh_call_args[-1])
+        self.assertIn("sudo -n", ssh_call_args[-1])
         self.assertIn(config.CAPTURE_CONTAINER, ssh_call_args[-1])
         self.assertIn(config.CONTAINER_CAPTURE_INTERFACE, ssh_call_args[-1])
         self.assertNotIn("sudo tcpdump -i", ssh_call_args[-1])
